@@ -2,7 +2,7 @@
 
 **Branch**: `chore/0.1.0-review-phase-1`
 **Status**: PR Open
-**PR**: _pending_
+**PR**: https://github.com/YonaZakkart/merge-and-monsters/pull/12
 **Owner**: Y
 **Version**: 0.1.0
 **Date**: 2026-11-23
