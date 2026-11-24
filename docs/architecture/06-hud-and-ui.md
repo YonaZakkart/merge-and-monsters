@@ -1,6 +1,6 @@
 # HUD and UI
 
-**Last updated**: 2026-11-20
+**Last updated**: 2026-11-23
 **Version**: 0.1.0
 
 ---
@@ -70,7 +70,9 @@ width.
 - Only renders when `store.sandboxMode === true`
 - Three buttons: Simulate Commit, Simulate PR Merge, Simulate Issue Close
 - Each button calls the corresponding store action and plays `uiClick`
-- Accepts a `disabled` prop reserved for Checkpoint 3 (engine animation state is not in the store)
+- Reads `store.attacking` and disables all three buttons while the engine plays a hero attack
+  animation, so rapid clicks cannot stack animations. The engine clears the flag when the animation
+  ends; it is never persisted.
 
 ---
 

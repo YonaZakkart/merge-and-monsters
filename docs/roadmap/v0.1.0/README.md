@@ -2,7 +2,7 @@
 
 **Version**: 0.1.0
 **Status**: In Progress
-**Last updated**: 2026-11-20
+**Last updated**: 2026-11-23
 
 ---
 
@@ -31,8 +31,8 @@ owner. Three `fix/` checkpoints merge the two parallel tracks before proceeding.
 | R08 | `feature/0.1.0-audio-synth-C` | C | 3 — State | R05 | Completed |
 | R09 | `fix/0.1.0-checkpoint-2` | C | CP-2 | R06, R07, R08 | Completed (wiring finished in R10) |
 | R10 | `feature/0.1.0-hud-components-Y` | Y | 4 — UI | R09 | Completed |
-| R11 | `fix/0.1.0-checkpoint-3` | C | CP-3 | R10 | In Review |
-| R12 | `chore/0.1.0-review-phase-1` | Y | 5 — Close | R11 | Planned |
+| R11 | `fix/0.1.0-checkpoint-3` | C | CP-3 | R10 | Completed |
+| R12 | `chore/0.1.0-review-phase-1` | Y | 5 — Close | R11 | In Review |
 | R13 | `chore/release-0.1.0` | C | 5 — Close | R12 | Planned |
 
 ---

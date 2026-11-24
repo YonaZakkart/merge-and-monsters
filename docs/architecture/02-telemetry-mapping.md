@@ -1,6 +1,6 @@
 # Telemetry Mapping
 
-**Last updated**: 2026-11-19
+**Last updated**: 2026-11-23
 **Version**: 0.1.0
 
 ---
@@ -22,7 +22,7 @@ Both modules are pure at their boundary: `telemetryMapper.ts` has no side effect
 |----------|---------|
 | `GET /repos/{owner}/{repo}` | Repository metadata: language, open issue count, default branch |
 | `GET /repos/{owner}/{repo}/commits` | Recent commits with stats |
-| `GET /repos/{owner}/{repo}/pulls?state=closed&merged=true` | Merged pull requests |
+| `GET /repos/{owner}/{repo}/pulls?state=closed&sort=updated&direction=desc` | Recently closed pull requests, filtered to `merged_at !== null` |
 | `GET /repos/{owner}/{repo}/issues?state=open` | Open issues for monster spawning |
 | `GET /repos/{owner}/{repo}/contents/README.md` | README presence check |
 | `GET /repos/{owner}/{repo}/actions/workflows` | CI workflow check |
@@ -78,7 +78,8 @@ XP_commit = floor(25 * ln(1 + delta_lines)) + 50 * n_pr
 
 - `delta_lines`: net additions + deletions per commit, clamped to [1, 2000] to reward atomic commits over mega-diffs.
 - `n_pr`: count of merged PRs in the fetched window.
-- XP accumulates. Level thresholds follow the pattern: level N requires `N * 100` XP.
+- XP accumulates. Level thresholds are cumulative: level 2 at 100 XP, level 3 at 300, level 4 at 600
+  (each step adds `level * 100`).
 
 ### Hero Weapon Class
 
@@ -130,17 +131,19 @@ HP_monster = base_severity * (1 + 0.15 * age_days)
 
 ### Training Dummy
 
-If the repository has zero open issues, a fixed "Training Dummy" monster spawns with 50 HP and no gold reward. It allows the player to test commit attacks without a real issue queue.
+If the repository has zero open issues, a fixed "Training Dummy" monster spawns with 50 HP and no gold reward. It allows the player to test commit attacks without a real issue queue. The dummy is repeatable: when every queued monster has been defeated, the store spawns a fresh one instead of leaving the canvas empty.
 
 ---
 
 ## Processed Event IDs
 
 To prevent duplicate XP on page refresh:
-- Commit SHAs awarded XP are stored in `localStorage` as a `Set<string>` serialized to JSON.
+- Commit SHAs awarded XP are stored in `localStorage`.
 - Merged PR IDs awarded XP are stored the same way.
-- Closed issue IDs used to defeat monsters are stored the same way.
-- Key: `m_and_m:processed_ids`
+- Defeated issues are stored as `issue:<owner/repo>:<issueNumber>`, namespaced so sandbox numbers
+  cannot collide with a live repository's issue numbers.
+- The set is serialized as an array inside the Zustand persist payload under the key
+  `m_and_m:state`.
 
 ---
 

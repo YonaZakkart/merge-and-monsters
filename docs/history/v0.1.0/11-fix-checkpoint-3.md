@@ -1,8 +1,8 @@
 # 11 — fix/0.1.0-checkpoint-3
 
 **Branch**: `fix/0.1.0-checkpoint-3`
-**Status**: PR Open
-**PR**: _pending_
+**Status**: Merged
+**PR**: https://github.com/YonaZakkart/merge-and-monsters/pull/11
 **Owner**: C
 **Version**: 0.1.0
 **Date**: 2026-11-22

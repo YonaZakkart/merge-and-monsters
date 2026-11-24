@@ -1,6 +1,6 @@
 # Game Engine — Canvas Renderer
 
-**Last updated**: 2026-11-19
+**Last updated**: 2026-11-23
 **Version**: 0.1.0
 
 ---
@@ -67,10 +67,14 @@ decay_factor    = 0.85
 
 ### Floating Damage Numbers
 
-Each `CombatEvent` with a damage value spawns a floating number:
-- Color: gold (`#D4AF37`) for hero attacks, red (`#C0392B`) for monster attacks
-- Font: monospace bold, 16 px
-- Motion: rises 2 px per frame, fades linearly over 40 frames
+Each combat event spawns floating text at the affected sprite:
+- `heroAttack` and `monsterAttack`: the damage value, gold (`#D4AF37`) for hero attacks and red
+  (`#C0392B`) for monster attacks
+- `xpGain`: `+N XP` above the hero
+- `levelUp`: `LVL N` above the hero, plus a gold particle burst
+- `monsterDefeated`: no number, only a red particle burst
+
+Font: monospace bold, 16 px. Motion: rises 2 px per frame, fades linearly over 40 frames.
 
 ---
 
