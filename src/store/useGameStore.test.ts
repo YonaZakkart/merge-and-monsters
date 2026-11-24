@@ -47,7 +47,7 @@ describe('useGameStore', () => {
       expect(state.hero.weaponClass).toBe('strictBlade');
       expect(state.activeMonster).not.toBeNull();
       expect(state.monsterQueue).toHaveLength(3);
-      expect(state.combatLog).toHaveLength(7);
+      expect(state.combatLog).toHaveLength(8);
     });
 
     it('does not award XP twice when the sandbox is relaunched', () => {
@@ -56,7 +56,15 @@ describe('useGameStore', () => {
       store().launchSandbox();
 
       expect(store().hero.xp).toBe(firstXp);
-      expect(store().combatLog).toHaveLength(7);
+      expect(store().combatLog).toHaveLength(8);
+    });
+
+    it('announces the level reached by the initial XP award', () => {
+      store().launchSandbox();
+
+      expect(store().hero.level).toBe(4);
+      expect(store().combatLog[0]?.messageKey).toBe('combat.levelUp');
+      expect(store().pendingEvents.some((event) => event.type === 'levelUp')).toBe(true);
     });
 
     it('drops any stored PAT when entering sandbox mode', async () => {
@@ -152,15 +160,90 @@ describe('useGameStore', () => {
       expect(after.pendingEvents.at(-1)?.type).toBe('monsterDefeated');
     });
 
-    it('leaves activeMonster null when the queue is exhausted', () => {
+    it('defeats the monster and awards gold when damage reaches zero', () => {
+      store().launchSandbox();
+      store().drainCombatEvents();
+      const before = store();
+      const monster = before.activeMonster;
+      if (!monster) throw new Error('expected an active monster');
+      useGameStore.setState({ activeMonster: { ...monster, hp: 1 } });
+      const next = before.monsterQueue[0];
+
+      store().simulateCommit();
+      const after = store();
+
+      expect(after.activeMonster?.issueNumber).toBe(next?.issueNumber);
+      expect(after.hero.gold).toBe(before.hero.gold + monster.goldReward);
+      expect(after.pendingEvents.map((event) => event.type)).toEqual([
+        'xpGain',
+        'heroAttack',
+        'monsterDefeated',
+      ]);
+      expect(after.processedIds.has(`issue:${before.repoSlug}:${monster.id}`)).toBe(true);
+      expect(after.combatLog[0]?.messageKey).toBe('combat.monsterDefeated');
+    });
+
+    it('defeats the monster on a PR merge that empties its HP', () => {
+      store().launchSandbox();
+      store().drainCombatEvents();
+      const before = store();
+      const monster = before.activeMonster;
+      if (!monster) throw new Error('expected an active monster');
+      useGameStore.setState({ activeMonster: { ...monster, hp: 10 } });
+
+      store().simulatePrMerge();
+      const after = store();
+
+      expect(after.activeMonster?.issueNumber).toBe(before.monsterQueue[0]?.issueNumber);
+      expect(after.hero.gold).toBe(before.hero.gold + monster.goldReward);
+      expect(after.pendingEvents.at(-1)?.type).toBe('monsterDefeated');
+    });
+
+    it('emits a levelUp event and log entry when XP crosses a threshold', () => {
+      store().launchSandbox();
+      store().drainCombatEvents();
+      const before = store();
+      useGameStore.setState({ hero: { ...before.hero, xp: 990, level: 4 } });
+
+      store().simulateCommit();
+      const after = store();
+
+      expect(after.hero.level).toBe(5);
+      expect(after.pendingEvents.some((event) => event.type === 'levelUp')).toBe(true);
+      expect(after.combatLog[0]?.messageKey).toBe('combat.levelUp');
+    });
+
+    it('respawns a Training Dummy when the queue is exhausted', () => {
       store().launchSandbox();
       store().simulateIssueClose();
       store().simulateIssueClose();
       store().simulateIssueClose();
       store().simulateIssueClose();
 
-      expect(store().activeMonster).toBeNull();
+      expect(store().activeMonster?.archetype).toBe('trainingDummy');
       expect(store().monsterQueue).toHaveLength(0);
+    });
+
+    it('keeps live issue numbers separate from sandbox defeats', async () => {
+      store().launchSandbox();
+      store().simulateIssueClose();
+      fetchRepoDataMock.mockResolvedValue({ ...getSandboxData(), slug: 'octo/repo' });
+
+      await store().connect('octo/repo');
+
+      expect(store().activeMonster?.issueNumber).toBe(104);
+    });
+
+    it('does not respawn defeated issues when the sandbox is relaunched', () => {
+      store().launchSandbox();
+      const defeated = store().activeMonster;
+      if (!defeated) throw new Error('expected an active monster');
+      store().simulateIssueClose();
+
+      store().launchSandbox();
+
+      expect(store().activeMonster?.issueNumber).not.toBe(defeated.issueNumber);
+      expect(store().processedIds.has(`issue:${store().repoSlug}:${defeated.id}`)).toBe(true);
     });
   });
 
@@ -201,6 +284,31 @@ describe('useGameStore', () => {
       const rehydrated = store().processedIds;
       expect(rehydrated).toBeInstanceOf(Set);
       expect(rehydrated.size).toBe(expectedSize);
+    });
+
+    it('rebuilds the sandbox queue on rehydration and keeps defeated issues out', async () => {
+      store().launchSandbox();
+      const defeated = store().activeMonster;
+      if (!defeated) throw new Error('expected an active monster');
+      store().simulateIssueClose();
+
+      await useGameStore.persist.rehydrate();
+
+      const state = store();
+      expect(state.activeMonster).not.toBeNull();
+      expect(state.activeMonster?.issueNumber).not.toBe(defeated.issueNumber);
+      expect(state.processedIds.has(`issue:${state.repoSlug}:${defeated.id}`)).toBe(true);
+    });
+
+    it('reopens the connect modal on rehydration for a live repository', async () => {
+      fetchRepoDataMock.mockResolvedValue({ ...getSandboxData(), slug: 'octo/repo' });
+      await store().connect('octo/repo');
+      const xp = store().hero.xp;
+
+      await useGameStore.persist.rehydrate();
+
+      expect(store().connected).toBe(false);
+      expect(store().hero.xp).toBe(xp);
     });
 
     it('clears state, localStorage, and the PAT on reset', async () => {

@@ -135,21 +135,22 @@ function resolveArchetype(issue: RawIssue): ArchetypeRule {
   );
 }
 
+/** The repeatable practice monster used when a repository has no open issues left. */
+export function createTrainingDummy(): MonsterEntity {
+  return {
+    id: -1,
+    archetype: 'trainingDummy',
+    name: 'Training Dummy',
+    hp: 50,
+    maxHp: 50,
+    goldReward: 0,
+    issueNumber: 0,
+  };
+}
+
 /** Build the monster queue from open issues, sorted by severity (highest HP first). */
 export function buildMonsterQueue(openIssues: RawIssue[]): MonsterEntity[] {
-  if (openIssues.length === 0) {
-    return [
-      {
-        id: -1,
-        archetype: 'trainingDummy',
-        name: 'Training Dummy',
-        hp: 50,
-        maxHp: 50,
-        goldReward: 0,
-        issueNumber: 0,
-      },
-    ];
-  }
+  if (openIssues.length === 0) return [createTrainingDummy()];
 
   return openIssues
     .filter((issue) => !issue.labels.some((label) => label.name === 'pull_request'))

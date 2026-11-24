@@ -5,6 +5,7 @@ import {
   buildMonsterQueue,
   calculateMaxHp,
   calculateXp,
+  createTrainingDummy,
   deriveWeaponClass,
   mapToCombatEvents,
 } from '../services/telemetryMapper';
@@ -15,6 +16,7 @@ import type {
   HeroState,
   MonsterEntity,
   RawCommit,
+  RawIssue,
   RepoData,
 } from '../types';
 
@@ -116,14 +118,130 @@ function commitXp(commit: RawCommit): number {
   return calculateXp([commit], [], new Set()).totalXp;
 }
 
-function damageMonster(monster: MonsterEntity | null, damage: number): MonsterEntity | null {
-  if (!monster) return null;
-  return { ...monster, hp: Math.max(0, monster.hp - damage) };
-}
-
 function awardXp(hero: HeroState, xp: number): HeroState {
   const total = hero.xp + xp;
   return { ...hero, xp: total, level: levelFromXp(total) };
+}
+
+/** Namespaced dedupe key so sandbox issue numbers cannot collide with live repositories. */
+function defeatedIssueKey(repoSlug: string | null, monster: MonsterEntity): string | null {
+  return monster.id > 0 && repoSlug ? `issue:${repoSlug}:${monster.id}` : null;
+}
+
+/** Open-issue monsters that have not been defeated yet, with the dummy fallback when empty. */
+function pendingMonsters(
+  openIssues: RawIssue[],
+  processedIds: Set<string>,
+  repoSlug: string | null
+): MonsterEntity[] {
+  return buildMonsterQueue(openIssues).filter((monster) => {
+    const key = defeatedIssueKey(repoSlug, monster);
+    return !key || !processedIds.has(key);
+  });
+}
+
+function combatState(
+  queue: MonsterEntity[]
+): Pick<GameStoreState, 'activeMonster' | 'monsterQueue'> {
+  return { activeMonster: queue[0] ?? createTrainingDummy(), monsterQueue: queue.slice(1) };
+}
+
+interface DamageOutcome {
+  activeMonster: MonsterEntity;
+  monsterQueue: MonsterEntity[];
+  defeated: MonsterEntity | null;
+}
+
+/** Apply damage to the active monster, defeating it and advancing the queue at zero HP. */
+function damageMonster(
+  monster: MonsterEntity | null,
+  queue: MonsterEntity[],
+  damage: number
+): DamageOutcome | null {
+  if (!monster) return null;
+
+  const hp = Math.max(0, monster.hp - damage);
+  if (hp > 0) return { activeMonster: { ...monster, hp }, monsterQueue: queue, defeated: null };
+
+  const [nextMonster, ...rest] = queue;
+  return {
+    activeMonster: nextMonster ?? createTrainingDummy(),
+    monsterQueue: rest,
+    defeated: monster,
+  };
+}
+
+interface AttackResult {
+  hero: HeroState;
+  activeMonster: MonsterEntity | null;
+  monsterQueue: MonsterEntity[];
+  processedIds: Set<string>;
+  events: CombatEvent[];
+  logEntries: CombatLogEntry[];
+}
+
+/** Resolve one sandbox attack: XP, level ups, damage, monster defeat, and log entries. */
+function resolveAttack(
+  state: GameStoreState,
+  xp: number,
+  damage: number,
+  logEntry: CombatLogEntry,
+  timestamp: number
+): AttackResult {
+  const hero = awardXp(state.hero, xp);
+  const outcome = damageMonster(state.activeMonster, state.monsterQueue, damage);
+  const events: CombatEvent[] = [
+    { type: 'xpGain', xp, timestamp },
+    { type: 'heroAttack', damage, timestamp },
+  ];
+  const logEntries: CombatLogEntry[] = [logEntry];
+
+  if (hero.level > state.hero.level) {
+    events.push({ type: 'levelUp', level: hero.level, timestamp });
+    logEntries.unshift(createLogEntry('combat.levelUp', { hero: hero.name, level: hero.level }));
+  }
+
+  if (!outcome) {
+    return {
+      hero,
+      activeMonster: state.activeMonster,
+      monsterQueue: state.monsterQueue,
+      processedIds: state.processedIds,
+      events,
+      logEntries,
+    };
+  }
+
+  const { activeMonster, monsterQueue, defeated } = outcome;
+  if (!defeated) {
+    return {
+      hero,
+      activeMonster,
+      monsterQueue,
+      processedIds: state.processedIds,
+      events,
+      logEntries,
+    };
+  }
+
+  events.push({ type: 'monsterDefeated', gold: defeated.goldReward, timestamp });
+  logEntries.unshift(
+    createLogEntry('combat.monsterDefeated', {
+      monster: defeated.name,
+      gold: defeated.goldReward,
+    })
+  );
+
+  const defeatedKey = defeatedIssueKey(state.repoSlug, defeated);
+
+  return {
+    hero: { ...hero, gold: hero.gold + defeated.goldReward },
+    activeMonster,
+    monsterQueue,
+    processedIds: defeatedKey ? new Set([...state.processedIds, defeatedKey]) : state.processedIds,
+    events,
+    logEntries,
+  };
 }
 
 interface MappedRepo {
@@ -147,31 +265,38 @@ function mapRepoData(data: RepoData, hero: HeroState, processedIds: Set<string>)
     data.hasCiWorkflows
   );
 
-  const queue = buildMonsterQueue(data.openIssues);
+  const queue = pendingMonsters(data.openIssues, processedIds, data.slug);
   const xp = hero.xp + totalXp;
+  const level = levelFromXp(xp);
+  const events = mapToCombatEvents(newCommits, newPrs, []);
+  const logEntries: CombatLogEntry[] = [
+    ...newCommits.map((commit) =>
+      createLogEntry('combat.commitXp', {
+        sha: commit.sha.slice(0, 7),
+        xp: commitXp(commit),
+      })
+    ),
+    ...newPrs.map((pr) => createLogEntry('combat.prXp', { number: pr.number, xp: PR_XP })),
+  ];
+
+  if (level > hero.level) {
+    events.push({ type: 'levelUp', level, timestamp: Date.now() });
+    logEntries.unshift(createLogEntry('combat.levelUp', { hero: hero.name, level }));
+  }
 
   return {
     hero: {
       ...hero,
       xp,
-      level: levelFromXp(xp),
+      level,
       hp: maxHp,
       maxHp,
       weaponClass: deriveWeaponClass(data.primaryLanguage),
     },
     processedIds: newProcessedIds,
-    activeMonster: queue[0] ?? null,
-    monsterQueue: queue.slice(1),
-    events: mapToCombatEvents(newCommits, newPrs, []),
-    logEntries: [
-      ...newCommits.map((commit) =>
-        createLogEntry('combat.commitXp', {
-          sha: commit.sha.slice(0, 7),
-          xp: commitXp(commit),
-        })
-      ),
-      ...newPrs.map((pr) => createLogEntry('combat.prXp', { number: pr.number, xp: PR_XP })),
-    ],
+    ...combatState(queue),
+    events,
+    logEntries,
   };
 }
 
@@ -226,22 +351,23 @@ export const useGameStore = create<GameStoreState>()(
         if (!commit) return;
 
         const xp = commitXp(commit);
-        const damage = xp;
         const timestamp = Date.now();
+        const result = resolveAttack(
+          state,
+          xp,
+          xp,
+          createLogEntry('combat.commitXp', { sha: commit.sha.slice(0, 7), xp }),
+          timestamp
+        );
 
         set({
-          hero: awardXp(state.hero, xp),
-          activeMonster: damageMonster(state.activeMonster, damage),
+          hero: result.hero,
+          activeMonster: result.activeMonster,
+          monsterQueue: result.monsterQueue,
+          processedIds: result.processedIds,
           attacking: true,
-          pendingEvents: [
-            ...state.pendingEvents,
-            { type: 'xpGain', xp, timestamp },
-            { type: 'heroAttack', damage, timestamp },
-          ],
-          combatLog: [
-            createLogEntry('combat.commitXp', { sha: commit.sha.slice(0, 7), xp }),
-            ...state.combatLog,
-          ].slice(0, MAX_LOG_ENTRIES),
+          pendingEvents: [...state.pendingEvents, ...result.events],
+          combatLog: [...result.logEntries, ...state.combatLog].slice(0, MAX_LOG_ENTRIES),
         });
       },
 
@@ -253,20 +379,22 @@ export const useGameStore = create<GameStoreState>()(
         if (!pr) return;
 
         const timestamp = Date.now();
+        const result = resolveAttack(
+          state,
+          PR_XP,
+          PR_XP,
+          createLogEntry('combat.prXp', { number: pr.number, xp: PR_XP }),
+          timestamp
+        );
 
         set({
-          hero: awardXp(state.hero, PR_XP),
-          activeMonster: damageMonster(state.activeMonster, PR_XP),
+          hero: result.hero,
+          activeMonster: result.activeMonster,
+          monsterQueue: result.monsterQueue,
+          processedIds: result.processedIds,
           attacking: true,
-          pendingEvents: [
-            ...state.pendingEvents,
-            { type: 'xpGain', xp: PR_XP, timestamp },
-            { type: 'heroAttack', damage: PR_XP, timestamp },
-          ],
-          combatLog: [
-            createLogEntry('combat.prXp', { number: pr.number, xp: PR_XP }),
-            ...state.combatLog,
-          ].slice(0, MAX_LOG_ENTRIES),
+          pendingEvents: [...state.pendingEvents, ...result.events],
+          combatLog: [...result.logEntries, ...state.combatLog].slice(0, MAX_LOG_ENTRIES),
         });
       },
 
@@ -279,11 +407,16 @@ export const useGameStore = create<GameStoreState>()(
 
         const [nextMonster, ...rest] = state.monsterQueue;
         const timestamp = Date.now();
+        const defeatedKey = defeatedIssueKey(state.repoSlug, monster);
+        const processedIds = defeatedKey
+          ? new Set([...state.processedIds, defeatedKey])
+          : state.processedIds;
 
         set({
           hero: { ...state.hero, gold: state.hero.gold + monster.goldReward },
-          activeMonster: nextMonster ?? null,
+          activeMonster: nextMonster ?? createTrainingDummy(),
           monsterQueue: rest,
+          processedIds,
           pendingEvents: [
             ...state.pendingEvents,
             { type: 'monsterDefeated', gold: monster.goldReward, timestamp },
@@ -340,11 +473,14 @@ export const useGameStore = create<GameStoreState>()(
       }),
       merge: (persisted, current) => {
         const saved = persisted as Partial<PersistedGameState> | undefined;
-        return {
-          ...current,
-          ...saved,
-          processedIds: new Set(saved?.processedIds ?? []),
-        };
+        const processedIds = new Set(saved?.processedIds ?? []);
+        const merged = { ...current, ...saved, processedIds };
+
+        if (!merged.connected) return merged;
+        if (!merged.sandboxMode) return { ...merged, connected: false };
+
+        const queue = pendingMonsters(getSandboxData().openIssues, processedIds, merged.repoSlug);
+        return { ...merged, ...combatState(queue) };
       },
     }
   )
