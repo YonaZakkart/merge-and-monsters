@@ -1,6 +1,6 @@
 # State Management
 
-**Last updated**: 2026-11-19
+**Last updated**: 2026-11-23
 **Version**: 0.1.0
 
 ---
@@ -36,6 +36,7 @@ interface GameStore {
 
   // Engine bridge (not persisted)
   pendingEvents: CombatEvent[];
+  attacking: boolean;
 
   // Actions
   connect: (slug: string, pat?: string) => Promise<void>;
@@ -44,6 +45,7 @@ interface GameStore {
   simulatePrMerge: () => void;
   simulateIssueClose: () => void;
   setMuted: (muted: boolean) => void;
+  setAttacking: (attacking: boolean) => void;
   addCombatLogEntry: (entry: CombatLogEntry) => void;
   advanceMonsterQueue: () => void;
   drainCombatEvents: () => CombatEvent[];
@@ -86,6 +88,14 @@ Not persisted (rebuilt on reconnect or refresh):
 - `activeMonster`
 - `combatLog`
 
+On rehydration, `merge()` rebuilds combat state:
+
+- In sandbox mode, the queue is rebuilt from the mock dataset and filtered against the defeated
+  issue IDs stored in `processedIds`. The next undefeated issue becomes active; an exhausted queue
+  falls back to the Training Dummy.
+- In live-repository mode, the fetched telemetry is not persisted, so `connected` is reset to `false`
+  and `RepoConnectModal` reappears. Hero progress is kept.
+
 ---
 
 ## Hero Progression
@@ -94,9 +104,12 @@ Not persisted (rebuilt on reconnect or refresh):
   (`threshold += level * 100`).
 - `connect` and `launchSandbox` heal the hero to `maxHp` and derive the weapon class from the
   repository language.
+- When an XP award crosses a threshold, the store emits a `levelUp` combat event and prepends a
+  `combat.levelUp` log entry.
 - Sandbox simulations award XP and also damage the active monster: a commit deals its XP value as
-  damage, a PR merge deals 50 (which is also the crit threshold), and closing an issue defeats the
-  monster, awards `goldReward`, and advances the queue.
+  damage, a PR merge deals 50 (which is also the crit threshold). Damage that reaches zero HP
+  defeats the monster, awards `goldReward`, advances the queue, and records the issue as defeated.
+  Closing an issue defeats it directly. When the queue is exhausted, a fresh Training Dummy spawns.
 
 ## Canvas Sync Strategy
 
@@ -116,8 +129,9 @@ depend on React renders.
 `processedIds` is a `Set<string>` containing:
 - Commit SHAs that have already awarded XP
 - Merged PR IDs that have already awarded XP
-- Closed issue IDs that have already defeated a monster (reserved; the v0.1.0 client only fetches
-  a closed issue count, so real issue closes are not detected yet)
+- Defeated issues, namespaced as `issue:<owner/repo>:<issueNumber>` so sandbox numbers cannot
+  collide with a live repository's issues. The v0.1.0 client only fetches a closed issue count, so
+  real issue closes are not detected yet.
 
 On reconnect, the client fetches fresh data, then filters out any IDs already in this set before mapping to RPG events. This prevents duplicate awards after a page refresh.
 

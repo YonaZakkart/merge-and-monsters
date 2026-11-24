@@ -1,7 +1,7 @@
 # 10 — feature/0.1.0-hud-components-Y
 
 **Branch**: `feature/0.1.0-hud-components-Y`
-**Status**: PR Open
+**Status**: Merged
 **PR**: https://github.com/YonaZakkart/merge-and-monsters/pull/10
 **Owner**: Y
 **Version**: 0.1.0
